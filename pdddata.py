@@ -2,6 +2,7 @@ import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import re
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 class TimeEntryGroup:
     """终极时间输入组件：全空初始态、Tab 补零、全选、自动跳格"""
@@ -227,18 +228,63 @@ class SalesApp:
             
             # 汇总对比
             daily = df.groupby(['成交日期', '商品id']).size().reset_index(name='销量')
-            ca, cb = f'销量_{da}', f'销量_{db}'
+            ca, cb = f'{da}', f'{db}'
             sa = daily[daily['成交日期']==da][['商品id','销量']].rename(columns={'销量':ca})
             sb = daily[daily['成交日期']==db][['商品id','销量']].rename(columns={'销量':cb})
             
             res = pd.merge(sa, sb, on='商品id', how='outer').fillna(0)
-            res['单量差'] = (res[cb] - res[ca]).astype(int)
-            res = res.sort_values(by='单量差', ascending=True)
+            res['单差'] = (res[cb] - res[ca]).astype(int)
+            res = res.sort_values(by='单差', ascending=True)
             
             sp = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=f"单量差分析_{da}_{db}.xlsx")
             if sp: 
-                res.to_excel(sp, index=False)
-                messagebox.showinfo("成功", "报告已生成！")
+                with pd.ExcelWriter(sp, engine='openpyxl') as writer:
+                    res.to_excel(writer, index=False, sheet_name='分析结果')
+                    worksheet = writer.book['分析结果']
+                    
+                    # --- 1. 定义样式（像选衣服一样定义好样式） ---
+                    # 表头样式：深蓝色背景，白色粗体字，居中
+                    header_fill = PatternFill(start_color="0078D4", end_color="0078D4", fill_type="solid")
+                    header_font = Font(color="FFFFFF", bold=True, size=11)
+                    center_alignment = Alignment(horizontal="center", vertical="center")
+                    
+                    # 边框样式：细实线
+                    thin_side = Side(style="thin", color="000000")
+                    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+                    # --- 2. 应用样式到表头 ---
+                    for cell in worksheet[1]: # 第1行是表头
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = center_alignment
+                        cell.border = thin_border
+                    # 设置第一行（表头）的高度为 30（默认通常是 15 左右）
+                    worksheet.row_dimensions[1].height = 30
+
+                    # --- 3. 自动调整列宽 + 数据行居中 + 加边框 ---
+                    for i, col in enumerate(res.columns):
+                        # 计算这一列最长的内容长度（加上一点余量）
+                        max_len = max(res[col].astype(str).map(len).max(), len(col)) + 4
+                        worksheet.column_dimensions[chr(65 + i)].width = max_len
+                        
+                        # 给数据行加边框和居中
+                        for row in range(2, len(res) + 2):
+                            cell = worksheet.cell(row=row, column=i+1)
+                            cell.alignment = center_alignment
+                            cell.border = thin_border
+                            
+                            # --- 4. 业务逻辑高亮（灵魂点睛） ---
+                            # 如果是“单量差”这一列（最后一列），根据正负标颜色
+                            if col == '单量差':
+                                if cell.value < 0:
+                                    cell.font = Font(color="FF0000", bold=True) # 掉量了，红色警告
+                                elif cell.value > 0:
+                                    cell.font = Font(color="00B050", bold=True) # 涨了，绿色鼓励
+
+                    # 5. 冻结首行
+                    worksheet.freeze_panes = 'A2'
+                
+                messagebox.showinfo("成功", "分析报告已生成！")
                 self.reset_ui()
         except Exception as e: messagebox.showerror("故障", str(e))
 
