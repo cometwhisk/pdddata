@@ -69,6 +69,11 @@ class TimeEntryGroup:
         if not (0 <= int(h or 0) <= 23 and 0 <= int(m or 0) <= 59 and 0 <= int(s or 0) <= 59):
             raise ValueError("时间数值范围不合法")
         return f"{h}:{m}:{s}"
+    
+    def clear(self):
+        """清空小时、分钟、秒的输入框"""
+        for ent in [self.h_ent, self.m_ent, self.s_ent]:
+            ent.delete(0, tk.END)  # 从第0位删到最后一位
 
 class SalesApp:
     def __init__(self, root):
@@ -143,6 +148,27 @@ class SalesApp:
         self.run_btn = ttk.Button(self.root, text="🚀 开始分析并导出结果", style="Main.TButton", command=self.process_data)
         self.run_btn.pack(pady=20, ipady=10, ipadx=20)
 
+    def reset_ui(self):
+        """核心重置逻辑：恢复到初始状态"""
+        # 1. 清空数据变量
+        self.file_path = None
+        self.blacklist_list = []
+        
+        # 2. 恢复文字提示
+        self.file_label.config(text="等待载入...", fg="#666666")
+        
+        # 3. 清空排除区间的列表
+        self.blacklist_box.delete(0, tk.END)
+        
+        # 4. 调用刚才写好的时间清空
+        self.time_s.clear()
+        self.time_e.clear()
+        
+        # 5. 清空并复原所有日期下拉框
+        for c in [self.date_s, self.date_e, self.date_a, self.date_b]:
+            c['values'] = [] # 清空可选日期
+            c.set('')        # 变成空白
+
     def load_file(self):
         p = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
         if not p: return
@@ -162,7 +188,7 @@ class SalesApp:
                 if dates: c.set(dates[0])
             self.file_path = p
             self.file_label.config(text=f"已载入: {p.split('/')[-1]}", fg="#0078d4")
-            messagebox.showinfo("完成", "文件校验通过！")
+            messagebox.showinfo("导入成功", f"文件校验通过！\n本次共成功导入 {len(df)} 条订单数据。")
         except Exception as e:
             messagebox.showerror("错误", str(e))
 
@@ -213,6 +239,7 @@ class SalesApp:
             if sp: 
                 res.to_excel(sp, index=False)
                 messagebox.showinfo("成功", "报告已生成！")
+                self.reset_ui()
         except Exception as e: messagebox.showerror("故障", str(e))
 
 if __name__ == "__main__":
