@@ -1,175 +1,219 @@
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from datetime import datetime
+import re
+
+class TimeEntryGroup:
+    """终极时间输入组件：全空初始态、Tab 补零、全选、自动跳格"""
+    def __init__(self, parent):
+        self.frame = tk.Frame(parent, bg="#ffffff")
+        
+        # 创建三个输入框，默认全空
+        self.h_ent = self._create_box(self.frame)
+        tk.Label(self.frame, text=":", bg="#ffffff").pack(side="left")
+        self.m_ent = self._create_box(self.frame)
+        tk.Label(self.frame, text=":", bg="#ffffff").pack(side="left")
+        self.s_ent = self._create_box(self.frame)
+        
+        # 绑定事件
+        for ent, next_ent in [(self.h_ent, self.m_ent), (self.m_ent, self.s_ent), (self.s_ent, None)]:
+            # 获得焦点自动全选，方便直接覆盖输入
+            ent.bind("<FocusIn>", lambda e, x=ent: x.selection_range(0, tk.END))
+            # 失去焦点自动补零（例如输 1 变 01）
+            ent.bind("<FocusOut>", lambda e, x=ent: self._format_on_leave(x))
+            # 输入监控与自动跳格
+            ent.bind("<KeyRelease>", lambda e, cur=ent, nxt=next_ent: self._on_key(e, cur, nxt))
+
+    def _create_box(self, parent):
+        # 移除了边框，采用扁平化设计
+        ent = tk.Entry(parent, width=3, justify="center", font=('Segoe UI', 10), 
+                      relief="flat", highlightthickness=1, highlightbackground="#cccccc")
+        ent.pack(side="left", padx=2, pady=2)
+        return ent
+
+    def _format_on_leave(self, current):
+        val = current.get().strip()
+        if val and len(val) == 1:
+            current.delete(0, tk.END)
+            current.insert(0, val.zfill(2))
+
+    def _on_key(self, event, current, next_box):
+        if event.keysym in ("Tab", "Shift_L", "Shift_R", "BackSpace", "Left", "Right"): 
+            return
+        
+        val = current.get()
+        # 输入冒号时自动补全并跳转
+        if event.char in (":", "："):
+            current.delete(0, tk.END)
+            current.insert(0, val.replace(":", "").replace("：", "").zfill(2))
+            if next_box: next_box.focus_set()
+            return
+
+        clean_val = re.sub(r'\D', '', val)
+        if val != clean_val:
+            current.delete(0, tk.END)
+            current.insert(0, clean_val)
+
+        # 输入满2位自动跳下一格
+        if len(clean_val) >= 2:
+            current.delete(0, tk.END)
+            current.insert(0, clean_val[:2])
+            if next_box: next_box.focus_set()
+
+    def get_time(self):
+        # 如果用户没填，自动补 00，并检查数值范围
+        h = self.h_ent.get().strip().zfill(2)
+        m = self.m_ent.get().strip().zfill(2)
+        s = self.s_ent.get().strip().zfill(2)
+        
+        if not (0 <= int(h or 0) <= 23 and 0 <= int(m or 0) <= 59 and 0 <= int(s or 0) <= 59):
+            raise ValueError("时间数值范围不合法")
+        return f"{h}:{m}:{s}"
 
 class SalesApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("电商销量异动分析助手 V1.0")
-        self.root.geometry("600x700")
+        self.root.title("电商销量异动分析助手 V2.1")
+        self.root.configure(bg="#f5f5f5")
+        
+        # 窗口居中
+        w, h = 850, 800
+        x = (self.root.winfo_screenwidth() - w) // 2
+        y = (self.root.winfo_screenheight() - h) // 2
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-        # 存储数据的变量
-        self.df = None
         self.blacklist_list = []
+        self.file_path = None
         
-        # --- 界面组件 ---
-        # 1. 文件选择
-        tk.Label(root, text="第一步：选择订单表格", font=('Arial', 10, 'bold')).pack(pady=5)
-        self.file_btn = tk.Button(root, text="打开 CSV 文件", command=self.load_file)
-        self.file_btn.pack()
-        self.file_label = tk.Label(root, text="未选择文件", fg="gray")
-        self.file_label.pack()
+        # 严格匹配 aa.csv 的原始表头顺序
+        self.STANDARD_HEADER = [
+            '商品', '订单号', '订单状态', '商品总价(元)', '邮费(元)', '店铺优惠折扣(元)', 
+            '平台优惠折扣(元)', '多多支付立减金额(元)', '用户实付金额(元)', '商家实收金额(元)', 
+            '商品数量(件)', '发货时间', '确认收货时间', '商品id', '商品规格', '样式ID', 
+            '商家编码-规格维度', '商家编码-商品维度', '商家备注', '售后状态', '快递单号', 
+            '快递公司', '订单成交时间', '是否分期', '分期期数', '手续费承担方', '分期方式'
+        ]
 
-        # 2. 黑名单时间管理
-        tk.Frame(root, height=2, bd=1, relief="sunken").pack(fill="x", padx=5, pady=10)
-        tk.Label(root, text="第二步：设置黑名单时间段 (格式: YYYY-MM-DD HH:MM:SS)", font=('Arial', 10, 'bold')).pack()
-        
-        time_frame = tk.Frame(root)
-        time_frame.pack(pady=5)
-        tk.Label(time_frame, text="开始:").grid(row=0, column=0)
-        self.start_entry = tk.Entry(time_frame, width=20)
-        self.start_entry.grid(row=0, column=1, padx=5)
-        
-        tk.Label(time_frame, text="结束:").grid(row=1, column=0)
-        self.end_entry = tk.Entry(time_frame, width=20)
-        self.end_entry.grid(row=1, column=1, padx=5)
-        
-        tk.Button(time_frame, text="添加至排除列表", command=self.add_blacklist).grid(row=2, column=0, columnspan=2, pady=5)
-        
-        self.blacklist_box = tk.Listbox(root, height=4, width=60)
-        self.blacklist_box.pack(padx=10)
-        tk.Button(root, text="删除选中时段", command=self.remove_blacklist).pack(pady=2)
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        self.style.configure("Main.TButton", font=("Microsoft YaHei", 10, "bold"), background="#0078d4", foreground="white")
+        self.setup_ui()
 
-        # 3. 日期对比选择
-        tk.Frame(root, height=2, bd=1, relief="sunken").pack(fill="x", padx=5, pady=10)
-        tk.Label(root, text="第三步：选择对比日期", font=('Arial', 10, 'bold')).pack()
-        
-        date_frame = tk.Frame(root)
-        date_frame.pack(pady=5)
-        tk.Label(date_frame, text="基准日期(前):").grid(row=0, column=0)
-        self.date_a_combo = ttk.Combobox(date_frame, state="readonly")
-        self.date_a_combo.grid(row=0, column=1, padx=5)
-        
-        tk.Label(date_frame, text="对比日期(后):").grid(row=1, column=0)
-        self.date_b_combo = ttk.Combobox(date_frame, state="readonly")
-        self.date_b_combo.grid(row=1, column=1, padx=5)
+    def setup_ui(self):
+        # 蓝色页眉
+        top = tk.Frame(self.root, bg="#0078d4", height=60); top.pack(fill="x")
+        tk.Label(top, text="销量异动分析助手", bg="#0078d4", fg="white", font=("Microsoft YaHei", 16, "bold")).pack(pady=15)
 
-        # 4. 执行按钮
-        tk.Button(root, text="开始分析并导出结果", bg="green", fg="white", font=('Arial', 12, 'bold'), 
-                  command=self.process_data, height=2, width=20).pack(pady=20)
+        container = tk.Frame(self.root, bg="#f5f5f5"); container.pack(fill="both", expand=True, padx=30, pady=10)
 
-    # --- 功能逻辑 ---
+        # 1. 载入
+        f_box = tk.LabelFrame(container, text=" 第一步：载入 CSV 订单表 ", bg="#f5f5f5", font=("Microsoft YaHei", 10, "bold"), padx=10, pady=10)
+        f_box.pack(fill="x", pady=10)
+        ttk.Button(f_box, text="📁 选择文件", command=self.load_file, width=20).pack(side="left")
+        self.file_label = tk.Label(f_box, text="等待载入...", bg="#f5f5f5", fg="#666666"); self.file_label.pack(side="left", padx=10)
+
+        # 2. 排除（两个时间框现在都是默认空的）
+        ex_box = tk.LabelFrame(container, text=" 第二步：排除干扰区间 (选填) ", bg="#f5f5f5", font=("Microsoft YaHei", 10, "bold"), padx=10, pady=10)
+        ex_box.pack(fill="x", pady=10)
+        row1 = tk.Frame(ex_box, bg="#f5f5f5"); row1.pack(fill="x")
+        
+        tk.Label(row1, text="从:", bg="#f5f5f5").grid(row=0, column=0)
+        self.date_s = ttk.Combobox(row1, state="readonly", width=12); self.date_s.grid(row=0, column=1, padx=5)
+        self.time_s = TimeEntryGroup(row1)
+        self.time_s.frame.grid(row=0, column=2)
+
+        tk.Label(row1, text=" 至 ", bg="#f5f5f5").grid(row=0, column=3, padx=5)
+        self.date_e = ttk.Combobox(row1, state="readonly", width=12); self.date_e.grid(row=0, column=4, padx=5)
+        self.time_e = TimeEntryGroup(row1) # 修正：这里也默认空
+        self.time_e.frame.grid(row=0, column=5)
+
+        ttk.Button(row1, text="添加排除", command=self.add_blacklist).grid(row=0, column=6, padx=15)
+        self.blacklist_box = tk.Listbox(ex_box, height=4, font=('Consolas', 9), relief="flat", highlightthickness=1, highlightbackground="#dddddd")
+        self.blacklist_box.pack(fill="x", pady=10)
+        ttk.Button(ex_box, text="删除选中项", command=self.remove_blacklist).pack(side="right")
+
+        # 3. 对比
+        d_box = tk.LabelFrame(container, text=" 第三步：对比分析日期 (按 ID 汇总) ", bg="#f5f5f5", font=("Microsoft YaHei", 10, "bold"), padx=10, pady=10)
+        d_box.pack(fill="x", pady=10)
+        self.date_a = ttk.Combobox(d_box, state="readonly", width=18); self.date_a.pack(side="left", padx=20)
+        tk.Label(d_box, text="VS", bg="#f5f5f5", font=("Arial", 10, "bold")).pack(side="left")
+        self.date_b = ttk.Combobox(d_box, state="readonly", width=18); self.date_b.pack(side="left", padx=20)
+
+        # 4. 执行
+        self.run_btn = ttk.Button(self.root, text="🚀 开始分析并导出结果", style="Main.TButton", command=self.process_data)
+        self.run_btn.pack(pady=20, ipady=10, ipadx=20)
+
     def load_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-        if file_path:
-            try:
-                # 预读检查表头
-                temp_df = pd.read_csv(file_path, nrows=0)
-                required = ['订单状态', '订单成交时间', '商品id', '商品', '商品规格', '商家编码-商品维度']
-                if not all(col in temp_df.columns for col in required):
-                    messagebox.showerror("错误", "表格格式不正确，请检查表头！")
-                    return
-                
-                self.file_path = file_path
-                self.file_label.config(text=file_path.split('/')[-1], fg="black")
-                
-                # 读取日期以供选择
-                full_df = pd.read_csv(file_path)
-                full_df['订单成交时间'] = pd.to_datetime(full_df['订单成交时间'].str.strip())
-                dates = sorted(full_df['订单成交时间'].dt.date.unique().astype(str))
-                self.date_a_combo['values'] = dates
-                self.date_b_combo['values'] = dates
-                messagebox.showinfo("成功", "文件读取成功，请选择日期。")
-            except Exception as e:
-                messagebox.showerror("错误", f"读取失败: {e}")
+        p = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
+        if not p: return
+        try:
+            # 严格校验顺序和内容
+            actual_header = pd.read_csv(p, nrows=0).columns.tolist()
+            if actual_header != self.STANDARD_HEADER:
+                messagebox.showerror("格式错误", "表格列名或顺序与标准不符，请检查导出方式！")
+                return
+
+            df = pd.read_csv(p)
+            df['订单成交时间'] = pd.to_datetime(df['订单成交时间'].str.strip(), errors='coerce')
+            df = df.dropna(subset=['订单成交时间'])
+            dates = sorted(df['订单成交时间'].dt.date.unique().astype(str))
+            for c in [self.date_s, self.date_e, self.date_a, self.date_b]:
+                c['values'] = dates
+                if dates: c.set(dates[0])
+            self.file_path = p
+            self.file_label.config(text=f"已载入: {p.split('/')[-1]}", fg="#0078d4")
+            messagebox.showinfo("完成", "文件校验通过！")
+        except Exception as e:
+            messagebox.showerror("错误", str(e))
 
     def add_blacklist(self):
-        start = self.start_entry.get().strip()
-        end = self.end_entry.get().strip()
-        if start and end:
-            self.blacklist_list.append((start, end))
-            self.blacklist_box.insert(tk.END, f"排除: {start} 至 {end}")
-            self.start_entry.delete(0, tk.END)
-            self.end_entry.delete(0, tk.END)
+        if not self.file_path: return
+        try:
+            fs = f"{self.date_s.get()} {self.time_s.get_time()}"
+            fe = f"{self.date_e.get()} {self.time_e.get_time()}"
+            if pd.to_datetime(fe) <= pd.to_datetime(fs):
+                messagebox.showwarning("提醒", "结束时间需晚于开始时间")
+                return
+            self.blacklist_list.append((fs, fe))
+            self.blacklist_box.insert(tk.END, f" 排除: {fs} 至 {fe}")
+        except Exception as e: messagebox.showerror("格式错误", str(e))
 
     def remove_blacklist(self):
-        selection = self.blacklist_box.curselection()
-        if selection:
-            index = selection[0]
-            self.blacklist_box.delete(index)
-            self.blacklist_list.pop(index)
+        sel = self.blacklist_box.curselection()
+        if sel: idx = sel[0]; self.blacklist_box.delete(idx); self.blacklist_list.pop(idx)
 
     def process_data(self):
-        if not hasattr(self, 'file_path'):
-            messagebox.showwarning("提醒", "请先选择文件")
-            return
-        
-        date_a = self.date_a_combo.get()
-        date_b = self.date_b_combo.get()
-        if not date_a or not date_b:
-            messagebox.showwarning("提醒", "请选择要对比的两个日期")
-            return
-
+        if not self.file_path: return
+        da, db = self.date_a.get(), self.date_b.get()
+        if not da or not db: return
         try:
-            # 1. 读取并清理
             df = pd.read_csv(self.file_path)
-            # 这里的 .str.strip() 解决了你表格里可能存在的 \t 制表符问题
             df = df[~df['订单状态'].isin(['待付款', '已取消'])]
-            df['订单成交时间'] = pd.to_datetime(df['订单成交时间'].str.strip())
-            df['成交日期'] = df['订单成交时间'].dt.date.astype(str)
-
-            # 2. 黑名单过滤
+            df['订单成交时间'] = pd.to_datetime(df['订单成交时间'].str.strip(), errors='coerce')
+            df = df.dropna(subset=['订单成交时间'])
+            
+            # 过滤黑名单
             for s, e in self.blacklist_list:
                 df = df[~((df['订单成交时间'] >= pd.to_datetime(s)) & (df['订单成交时间'] <= pd.to_datetime(e)))]
-
-            # 3. 汇总
-            # 这里加入了“商家编码-商品维度”
-            group_cols = ['商品id', '商品', '商品规格', '商家编码-商品维度']
-            # 先统一去掉字符串两端的空格或制表符
-            for col in group_cols:
-                if df[col].dtype == 'object':
-                    df[col] = df[col].str.strip()
-
-            daily = df.groupby(['成交日期'] + group_cols).size().reset_index(name='销量')
-
-            # --- 修正后的第 4 步：对比 ---
-            # 提取日期 A 的销量，只保留必要列，并重命名销量列
-            sales_a = daily[daily['成交日期'] == date_a][group_cols + ['销量']].rename(columns={'销量': f'销量_{date_a}'})
-            # 提取日期 B 的销量，同上
-            sales_b = daily[daily['成交日期'] == date_b][group_cols + ['销量']].rename(columns={'销量': f'销量_{date_b}'})
             
-            # 合并时只根据 group_cols 合并，这样就不会产生多余的日期列了
-            comparison = pd.merge(sales_a, sales_b, on=group_cols, how='outer')
+            df['成交日期'] = df['订单成交时间'].dt.date.astype(str)
+            df['商品id'] = df['商品id'].astype(str).str.strip()
             
-            # 填充缺失值为 0
-            comparison = comparison.fillna(0)
+            # 汇总对比
+            daily = df.groupby(['成交日期', '商品id']).size().reset_index(name='销量')
+            ca, cb = f'销量_{da}', f'销量_{db}'
+            sa = daily[daily['成交日期']==da][['商品id','销量']].rename(columns={'销量':ca})
+            sb = daily[daily['成交日期']==db][['商品id','销量']].rename(columns={'销量':cb})
             
-            col_a = f'销量_{date_a}'
-            col_b = f'销量_{date_b}'
-            comparison['单量差'] = comparison[col_b] - comparison[col_a]
+            res = pd.merge(sa, sb, on='商品id', how='outer').fillna(0)
+            res['单量差'] = (res[cb] - res[ca]).astype(int)
+            res = res.sort_values(by='单量差', ascending=True)
             
-            # --- 修正后的第 5 步：最终字段筛选与排序 ---
-            # 只保留你想要的这几个表头
-            final_columns = ['商品id', '商品', '商品规格', '商家编码-商品维度', col_a, col_b, '单量差']
-            
-            # 检查字段是否都存在（保险起见）
-            existing_cols = [c for c in final_columns if c in comparison.columns]
-            result = comparison[existing_cols].sort_values(by='单量差', ascending=True)
-
-            # --- 导出结果 ---
-            # (后续导出代码保持不变)
-
-            # 6. 导出
-            save_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
-            if save_path:
-                result.to_excel(save_path, index=False)
-                messagebox.showinfo("大功告成", f"分析完成！结果已保存至：\n{save_path}")
-
-        except Exception as e:
-            messagebox.showerror("运行错误", str(e))
+            sp = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=f"单量差分析_{da}_{db}.xlsx")
+            if sp: 
+                res.to_excel(sp, index=False)
+                messagebox.showinfo("成功", "报告已生成！")
+        except Exception as e: messagebox.showerror("故障", str(e))
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = SalesApp(root)
-    root.mainloop()
+    root = tk.Tk(); SalesApp(root); root.mainloop()
