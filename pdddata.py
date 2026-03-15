@@ -79,7 +79,7 @@ class TimeEntryGroup:
 class SalesApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("电商销量异动分析助手 V2.1")
+        self.root.title("拼多多单量分析助手 V2.1")
         self.root.configure(bg="#f5f5f5")
         
         # 窗口居中
@@ -236,7 +236,7 @@ class SalesApp:
             res['单差'] = (res[cb] - res[ca]).astype(int)
             res = res.sort_values(by='单差', ascending=True)
             
-            sp = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=f"单量差分析_{da}_{db}.xlsx")
+            sp = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=f"单量分析_{da}_{db}.xlsx")
             if sp: 
                 with pd.ExcelWriter(sp, engine='openpyxl') as writer:
                     res.to_excel(writer, index=False, sheet_name='分析结果')
@@ -274,8 +274,8 @@ class SalesApp:
                             cell.border = thin_border
                             
                             # --- 4. 业务逻辑高亮（灵魂点睛） ---
-                            # 如果是“单量差”这一列（最后一列），根据正负标颜色
-                            if col == '单量差':
+                            # 如果是“单差”这一列（最后一列），根据正负标颜色
+                            if col == '单差':
                                 if cell.value < 0:
                                     cell.font = Font(color="FF0000", bold=True) # 掉量了，红色警告
                                 elif cell.value > 0:
