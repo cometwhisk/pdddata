@@ -224,7 +224,8 @@ class SalesApp:
                 df = df[~((df['订单成交时间'] >= pd.to_datetime(s)) & (df['订单成交时间'] <= pd.to_datetime(e)))]
             
             df['成交日期'] = df['订单成交时间'].dt.date.astype(str)
-            df['商品id'] = df['商品id'].astype(str).str.strip()
+            # 先去除可能存在的空格，再转为数字类型（int64 适合存储长 ID）
+            df['商品id'] = pd.to_numeric(df['商品id'], errors='coerce').fillna(0).astype('int64')
             
             # 汇总对比
             daily = df.groupby(['成交日期', '商品id']).size().reset_index(name='销量')
@@ -245,7 +246,8 @@ class SalesApp:
                     # --- 1. 定义样式（像选衣服一样定义好样式） ---
                     # 表头样式：深蓝色背景，白色粗体字，居中
                     header_fill = PatternFill(start_color="0078D4", end_color="0078D4", fill_type="solid")
-                    header_font = Font(color="FFFFFF", bold=True, size=11)
+                    header_font = Font(name='微软雅黑',color="FFFFFF", bold=True, size=11)
+                    body_font = Font(name='微软雅黑', size=10)
                     center_alignment = Alignment(horizontal="center", vertical="center")
                     
                     # 边框样式：细实线
@@ -272,14 +274,20 @@ class SalesApp:
                             cell = worksheet.cell(row=row, column=i+1)
                             cell.alignment = center_alignment
                             cell.border = thin_border
+
+                            cell.font = body_font
+
+                            #针对 ID 列设置数字格式
+                            if col == '商品id':
+                                cell.number_format = '0' # 强制显示为完整数字
                             
                             # --- 4. 业务逻辑高亮（灵魂点睛） ---
                             # 如果是“单差”这一列（最后一列），根据正负标颜色
                             if col == '单差':
                                 if cell.value < 0:
-                                    cell.font = Font(color="FF0000", bold=True) # 掉量了，红色警告
+                                    cell.font = Font(name='微软雅黑',color="FF0000", bold=True) # 掉量了，红色警告
                                 elif cell.value > 0:
-                                    cell.font = Font(color="00B050", bold=True) # 涨了，绿色鼓励
+                                    cell.font = Font(name='微软雅黑',color="00B050", bold=True) # 涨了，绿色鼓励
 
                     # 5. 冻结首行
                     worksheet.freeze_panes = 'A2'
