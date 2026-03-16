@@ -108,7 +108,7 @@ class SalesApp:
     def setup_ui(self):
         # 蓝色页眉
         top = tk.Frame(self.root, bg="#0078d4", height=60); top.pack(fill="x")
-        tk.Label(top, text="销量异动分析助手", bg="#0078d4", fg="white", font=("Microsoft YaHei", 16, "bold")).pack(pady=15)
+        tk.Label(top, text="拼多多单量分析助手", bg="#0078d4", fg="white", font=("Microsoft YaHei", 16, "bold")).pack(pady=15)
 
         container = tk.Frame(self.root, bg="#f5f5f5"); container.pack(fill="both", expand=True, padx=30, pady=10)
 
